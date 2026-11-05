@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>P2P Live Mesh Monitor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#09090b; --panel:#12131a; --line:#262833; --txt:#e4e4e7; --dim:#8b8d9a; --green:#00dc82; --pink:#ff007f; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--txt); font-family: Segoe UI, system-ui, sans-serif; overflow:hidden; }
+  body { display:flex; flex-direction:column; }
+  header { display:flex; align-items:center; gap:22px; padding:10px 18px; border-bottom:1px solid var(--line); background:#0d0e14; flex:0 0 auto; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; font-weight:700; letter-spacing:.3px; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#ef4444; margin-right:7px; }
+  .dot.ok { background:var(--green); box-shadow:0 0 8px var(--green); }
+  .stat { font-size:12px; color:var(--dim); } .stat b { color:var(--txt); font-size:15px; margin-right:4px; }
+  .stat b.g { color:var(--green); }
+  .bar { width:140px; height:8px; background:#1e2029; border-radius:4px; overflow:hidden; display:inline-block; vertical-align:middle; margin-left:6px; }
+  .bar > i { display:block; height:100%; background:linear-gradient(90deg,#0d9488,var(--green)); transition:width .5s; }
+  #stage { position:relative; flex:1 1 auto; min-height:0; padding:12px; }
+  #grid { position:absolute; inset:12px; display:grid; gap:14px; }
+  #arrows { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:5; overflow:visible; }
+  .card { container-type:inline-size; position:relative; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:2.2cqw; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; transition:box-shadow .3s, border-color .3s, opacity .3s; }
+  .card.idle { opacity:.55; }
+  .card.seeding { border-color:var(--c); box-shadow:0 0 18px -2px var(--c); }
+  .card.receiving { box-shadow:inset 0 0 0 2px var(--c2, #fff3); }
+  .ch { display:flex; align-items:center; gap:2cqw; font-size:max(11px,3.6cqw); min-height:0; }
+  .sw { width:3.2cqw; height:3.2cqw; min-width:9px; min-height:9px; border-radius:50%; background:var(--c); flex:0 0 auto; }
+  .nm { font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sub { color:var(--dim); font-size:max(9px,2.7cqw); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-left:auto; }
+  .badge { font-size:max(9px,2.6cqw); padding:.2em .6em; border-radius:99px; background:#1e2029; color:var(--dim); white-space:nowrap; }
+  .badge.seed { background:var(--c); color:#fff; }
+  .badge.rx { background:#0b3a2c; color:var(--green); }
+  .badge.b-audio { background:#2e1065; color:#d8b4fe; border:1px solid rgba(168,85,247,0.3); font-size:max(9px,2.4cqw); }
+  .badge.b-quality { background:#082f49; color:#7dd3fc; border:1px solid rgba(56,189,248,0.3); font-size:max(9px,2.4cqw); }
+  .matrix { flex:1 1 auto; min-height:0; margin:1.6cqw 0; display:grid; grid-template-columns:repeat(16,1fr); grid-template-rows:repeat(4,1fr); gap:.6cqw; }
+  .cell { border-radius:max(1.5px,.5cqw); background:#1a1c25; min-width:0; min-height:0; transition:background .25s; }
+  .cell.h { background:#e4e4e7; }
+  .cell.p { background:var(--sc); }
+  .cell.now { outline:max(2px,.45cqw) solid var(--pink); outline-offset:-1px; z-index:1; }
+  .cf { display:flex; gap:2cqw; font-size:max(9px,2.8cqw); color:var(--dim); flex-wrap:wrap; }
+  .cf b { color:var(--txt); }
+  .cf .off { color:var(--green); }
+  .mini { height:max(3px,.9cqw); background:#1e2029; border-radius:3px; overflow:hidden; margin-top:1cqw; }
+  .mini > i { display:block; height:100%; background:var(--green); transition:width .5s; }
+  #ledger { flex:0 0 auto; border-top:1px solid var(--line); background:#0d0e14; padding:6px 18px; font-size:12px; color:var(--dim); display:flex; gap:18px; overflow-x:auto; white-space:nowrap; min-height:32px; align-items:center; }
+  #ledger .e b { color:var(--txt); }
+  #ledger .e i { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; }
+  #empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; color:var(--dim); text-align:center; gap:6px; }
+  .legend { display:flex; gap:12px; font-size:11px; color:var(--dim); margin-left:auto; align-items:center; }
+  .legend i { display:inline-block; width:11px; height:11px; border-radius:2px; vertical-align:middle; margin-right:4px; }
+  @keyframes flow { to { stroke-dashoffset:-28; } }
+  .arrow-live { animation: flow .6s linear infinite; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="dot" id="dot"></span>P2P Live Mesh Monitor</h1>
+  <div class="stat"><b id="sPeers">0</b>peers</div>
+  <div class="stat"><b id="sSwarms">0</b>swarms</div>
+  <div class="stat" id="sSwarmBox" style="display:none;"><span id="sSwarmPill" style="font-size:11px; padding:3px 10px; border-radius:99px; background:#1e1b4b; border:1px solid #6366f155; color:#c7d2fe; font-weight:600;"></span></div>
+  <div class="stat"><b class="g" id="sOff">0.0%</b>offload via seeding<span class="bar"><i id="sBar" style="width:0%"></i></span></div>
+  <div class="stat"><b id="sP2P">0</b>MB via P2P</div>
+  <div class="stat"><b id="sHttp">0</b>MB via server</div>
+  <div class="legend">
+    <span><i style="background:#e4e4e7"></i>from server</span>
+    <span><i style="background:var(--green)"></i>from peer (seeder's colour)</span>
+    <span><i style="background:#1a1c25;border:1px solid #333"></i>missing</span>
+    <span><i style="background:transparent;outline:2px solid var(--pink);outline-offset:-1px"></i>playhead</span>
+  </div>
+</header>
+<div id="stage">
+  <div id="grid"></div>
+  <svg id="arrows"></svg>
+  <div id="empty"><div style="font-size:18px;color:var(--txt)">Waiting for peers…</div><div id="emptyMsg">Peers appear once they join the tracker.</div></div>
+</div>
+<div id="ledger"><span>Flow ledger (seeder → receiver) will appear here.</span></div>
+
+<script>
+"use strict";
+const PALETTE = ["#10b981","#22d3ee","#a78bfa","#f59e0b","#fb7185","#818cf8","#2dd4bf","#e879f9","#84cc16","#f97316","#38bdf8","#f43f5e"];
+const LIVE_MS = 6000;
+const colorOf = new Map();
+function colorFor(id) {
+  if (!colorOf.has(id)) colorOf.set(id, PALETTE[colorOf.size % PALETTE.length]);
+  return colorOf.get(id);
+}
+const $ = (id) => document.getElementById(id);
+const grid = $("grid"), svg = $("arrows");
+const cards = new Map(); // peerId -> {el, cells[], refs}
+const peerPlayheads = new Map(); // peerId -> resolved playChunk
+let state = null, offsetMs = 0, lastCount = -1;
+
+const mb = (b) => (b / 1048576);
+const fmtMB = (b) => mb(b) >= 100 ? mb(b).toFixed(0) : mb(b).toFixed(1);
+function fmtRate(bps) { return bps > 1048576 ? (bps/1048576).toFixed(1)+" MB/s" : bps > 1024 ? (bps/1024).toFixed(0)+" KB/s" : "0"; }
+function nameOf(p) { return p ? (p.userName && !/^Peer /.test(p.userName) ? p.userName : (p.userName || p.peerId.slice(-6))) : "?"; }
+
+function formatAudio(track) {
+  if (track === null || track === undefined || track === "" || track === "def") return "Track #0";
+  const s = String(track).trim();
+  if (s.toLowerCase().startsWith("track")) return s;
+  return "Track #" + s;
+}
+
+function formatQuality(q) {
+  if (!q || q === "max" || q === "MAX" || q === "auto" || q === "140000k") return "Max";
+  const s = String(q).toLowerCase();
+  if (s.endsWith("m")) return s.slice(0, -1).toUpperCase() + " Mbps";
+  if (s.endsWith("k")) {
+    const kbps = parseInt(s, 10);
+    if (!isNaN(kbps)) return kbps >= 1000 ? (kbps / 1000).toFixed(kbps % 1000 === 0 ? 0 : 1) + " Mbps" : kbps + " kbps";
+  }
+  return String(q);
+}
+
+function makeCard(p) {
+  const el = document.createElement("div");
+  el.className = "card";
+  el.innerHTML = `<div class="ch">
+      <span class="sw"></span>
+      <span class="nm"></span>
+      <span class="badge b-st"></span>
+      <span class="badge b-audio" style="display:none"></span>
+      <span class="badge b-quality" style="display:none"></span>
+      <span class="sub"></span>
+    </div>
+    <div class="matrix"></div>
+    <div class="cf"><span>⬇ P2P <b class="dp">0</b> MB</span><span>🌐 server <b class="dh">0</b> MB</span><span>⬆ seeded <b class="up">0</b> MB</span><span class="off">0% offload</span></div>
+    <div class="mini"><i></i></div>`;
+  const m = el.querySelector(".matrix"), cells = [];
+  for (let i = 0; i < 64; i++) { const c = document.createElement("div"); c.className = "cell"; m.appendChild(c); cells.push(c); }
+  const refs = { 
+    nm: el.querySelector(".nm"), 
+    st: el.querySelector(".b-st"), 
+    audio: el.querySelector(".b-audio"),
+    quality: el.querySelector(".b-quality"),
+    sub: el.querySelector(".sub"),
+    dp: el.querySelector(".dp"), 
+    dh: el.querySelector(".dh"), 
+    up: el.querySelector(".up"), 
+    off: el.querySelector(".off"), 
+    bar: el.querySelector(".mini i") 
+  };
+  grid.appendChild(el);
+  return { el, cells, refs };
+}
+
+function layout(n) {
+  const w = grid.clientWidth, h = grid.clientHeight, gap = 14, ideal = 1.7;
+  let best = 1, bestScore = -1;
+  for (let c = 1; c <= n; c++) {
+    const r = Math.ceil(n / c);
+    const cw = (w - gap * (c - 1)) / c, ch = (h - gap * (r - 1)) / r;
+    const score = Math.min(cw / ideal, ch);
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  const rows = Math.ceil(n / best);
+  grid.style.gridTemplateColumns = `repeat(${best}, minmax(0,1fr))`;
+  grid.style.gridTemplateRows = `repeat(${rows}, minmax(0,1fr))`;
+}
+
+function render(s) {
+  state = s;
+  offsetMs = s.now - Date.now();
+  $("dot").classList.toggle("ok", !!s.ok);
+  const peers = s.peers || [];
+  const byId = new Map(peers.map(p => [p.peerId, p]));
+  const t = s.totals || {};
+  $("sPeers").textContent = peers.length;
+  $("sSwarms").textContent = s.tracker ? s.tracker.activeSwarms : 0;
+  $("sOff").textContent = (t.offloadPct || 0).toFixed(1) + "%";
+  $("sBar").style.width = Math.min(100, t.offloadPct || 0) + "%";
+  $("sP2P").textContent = fmtMB(t.p2pDownBytes || 0);
+  $("sHttp").textContent = fmtMB(t.httpDownBytes || 0);
+  $("empty").style.display = peers.length ? "none" : "flex";
+  if (!s.ok) $("emptyMsg").textContent = s.error || "";
+
+  const sBox = $("sSwarmBox"), sPill = $("sSwarmPill");
+  if (sBox && sPill) {
+    if (s.swarmsList && s.swarmsList.length > 0) {
+      sBox.style.display = "inline-block";
+      if (s.swarmsList.length === 1) {
+        const sw = s.swarmsList[0];
+        sPill.textContent = "🎬 " + [formatAudio(sw.audioTrack), formatQuality(sw.quality)].join(" · ");
+        sPill.title = "Active Media Swarm: " + (sw.itemId ? "#" + sw.itemId : sw.hashPreview);
+      } else {
+        sPill.textContent = "⚠️ " + s.swarmsList.length + " Media Swarms Active";
+        sPill.title = s.swarmsList.map(sw => `${sw.itemId || sw.hashPreview}: ${formatAudio(sw.audioTrack)} ${formatQuality(sw.quality)} (${sw.peerCount} peers)`).join(" | ");
+      }
+    } else {
+      sBox.style.display = "none";
+    }
+  }
+
+  const now = Date.now() + offsetMs;
+  const live = new Map(); // receiver -> seeder color, seeder ids
+  const seedingNow = new Set();
+  for (const e of s.edges || []) {
+    if (now - e.lastAt < LIVE_MS) { seedingNow.add(e.from); live.set(e.to, colorFor(e.from)); }
+  }
+
+  if (peers.length !== lastCount) { lastCount = peers.length; layout(peers.length); }
+  for (const [id, c] of cards) if (!byId.has(id)) { c.el.remove(); cards.delete(id); }
+
+  peers.forEach((p, idx) => {
+    let c = cards.get(p.peerId);
+    if (!c) { c = makeCard(p); cards.set(p.peerId, c); }
+    c.el.style.order = idx;
+    const col = colorFor(p.peerId);
+    c.el.style.setProperty("--c", col);
+    const isSeed = seedingNow.has(p.peerId) || (now - p.seedingAt < LIVE_MS);
+    c.el.classList.toggle("seeding", isSeed);
+    c.el.classList.toggle("idle", p.stale || p.lobby);
+    if (live.has(p.peerId)) c.el.style.setProperty("--c2", live.get(p.peerId));
+    c.el.classList.toggle("receiving", live.has(p.peerId));
+    const r = c.refs;
+    r.nm.textContent = nameOf(p) + (p.browser ? " (" + p.browser + ")" : "");
+    r.st.textContent = isSeed ? "⬆ SEEDING " + (p.upRate > 0 ? fmtRate(p.upRate) : "") : live.has(p.peerId) ? "⬇ receiving" : p.lobby ? "lobby" : p.stale ? "stale" : "watching";
+    r.st.className = "badge b-st " + (isSeed ? "seed" : live.has(p.peerId) ? "rx" : "");
+
+    // Audio & Quality badges from the new 2.3.0 telemetry updates
+    if (p.audioTrack !== null && p.audioTrack !== undefined && !p.lobby) {
+      r.audio.textContent = "🎵 " + formatAudio(p.audioTrack);
+      r.audio.style.display = "inline-block";
+    } else {
+      r.audio.style.display = "none";
+    }
+    if (p.quality && !p.lobby) {
+      r.quality.textContent = "🎬 " + formatQuality(p.quality);
+      r.quality.style.display = "inline-block";
+    } else {
+      r.quality.style.display = "none";
+    }
+
+    r.dp.textContent = fmtMB(p.p2pDownBytes);
+    r.dh.textContent = fmtMB(p.httpDownBytes);
+    r.up.textContent = fmtMB(p.p2pUpBytes);
+    r.off.textContent = p.offloadPct.toFixed(0) + "% offload";
+    r.bar.style.width = p.offloadPct + "%";
+
+    // 64-chunk matrix matching Jellyfin's exact sliding window logic
+    const known = new Map(p.chunks.map(ch => [ch.n, ch]));
+    const streamBase = p.streamStartChunk != null ? p.streamStartChunk : 0;
+
+    let playChunk = null;
+    if (p.playingChunk != null) {
+      if (p.playingChunk >= streamBase) {
+        playChunk = p.playingChunk;
+      } else {
+        // Offset from stream start (e.g. video.currentTime / 4)
+        playChunk = streamBase + p.playingChunk;
+      }
+    }
+
+    if (playChunk != null) {
+      peerPlayheads.set(p.peerId, playChunk);
+    } else if (peerPlayheads.has(p.peerId)) {
+      playChunk = peerPlayheads.get(p.peerId);
+    } else if (p.chunks.length > 0) {
+      let maxChunk = 0;
+      for (const ch of p.chunks) if (ch.n > maxChunk) maxChunk = ch.n;
+      playChunk = Math.max(streamBase, maxChunk - 14);
+      peerPlayheads.set(p.peerId, playChunk);
+    }
+
+    // Exact sliding window matching jellyfin-p2p-ui.js:
+    // Window starts at streamBase while playhead advances from cube 0..55.
+    // Once playhead reaches cube 56 (leaving 8 cubes forward buffer), the window scrolls!
+    let startWindow = streamBase;
+    if (playChunk != null && playChunk >= streamBase + (64 - 8)) {
+      startWindow = playChunk - (64 - 8);
+    }
+    startWindow = Math.max(0, startWindow);
+
+    const swarmTag = (!p.lobby && s.swarmsList && s.swarmsList.length > 1) ? (" · #" + (p.swarm || "").slice(0, 5)) : "";
+    r.sub.textContent = p.peerId.slice(-4) + swarmTag + (p.lobby || p.chunks.length === 0 ? " · lobby" : " · #" + startWindow + "-" + (startWindow + 63));
+
+    for (let i = 0; i < 64; i++) {
+      const sn = startWindow + i;
+      const cell = c.cells[i], ch = known.get(sn);
+      let cls = "cell";
+      if (ch) cls += ch.s === "p" ? " p" : " h";
+      if (playChunk !== null && sn === playChunk) cls += " now";
+      if (cell.className !== cls) cell.className = cls;
+      cell.style.setProperty("--sc", ch && ch.s === "p" && ch.p ? colorFor(ch.p) : "");
+      const seederPeer = ch && ch.p ? (byId.get(ch.p) || { peerId: ch.p }) : null;
+      const seederMeta = seederPeer && (seederPeer.audioTrack || seederPeer.quality) ? ` [${[formatAudio(seederPeer.audioTrack), formatQuality(seederPeer.quality)].filter(Boolean).join(" · ")}]` : "";
+      cell.title = ch ? `#${sn} ${ch.s === "p" ? "from " + nameOf(seederPeer) + seederMeta : "from Jellyfin Server (HTTP)"}` : `#${sn}`;
+    }
+  });
+
+  // ledger
+  const led = $("ledger");
+  const list = (s.edges || []).slice().sort((a, b) => b.bytes - a.bytes);
+  led.innerHTML = list.length ? "" : "<span>No peer-to-peer transfers observed yet.</span>";
+  for (const e of list) {
+    const span = document.createElement("span");
+    span.className = "e";
+    const a = byId.get(e.from), b = byId.get(e.to);
+    const aMeta = a && (a.audioTrack || a.quality) ? ` [${[formatAudio(a.audioTrack), formatQuality(a.quality)].filter(Boolean).join(" · ")}]` : "";
+    const bMeta = b && (b.audioTrack || b.quality) ? ` [${[formatAudio(b.audioTrack), formatQuality(b.quality)].filter(Boolean).join(" · ")}]` : "";
+    span.innerHTML = `<i></i><b></b>${aMeta} → <b></b>${bMeta} · ${e.chunks} chunks · ${fmtMB(e.bytes)} MB`;
+    span.querySelector("i").style.background = colorFor(e.from);
+    const bs = span.querySelectorAll("b");
+    bs[0].textContent = nameOf(a || { peerId: e.from });
+    bs[1].textContent = nameOf(b || { peerId: e.to });
+    led.appendChild(span);
+  }
+  drawArrows();
+}
+
+function clip(rect, cx, cy, dx, dy, pad) {
+  // point where ray from center (cx,cy) in direction (dx,dy) leaves rect, plus padding
+  const hw = rect.width / 2 + pad, hh = rect.height / 2 + pad;
+  const t = Math.min(dx !== 0 ? hw / Math.abs(dx) : Infinity, dy !== 0 ? hh / Math.abs(dy) : Infinity);
+  return [cx + dx * t, cy + dy * t];
+}
+
+function drawArrows() {
+  if (!state) return;
+  const now = Date.now() + offsetMs;
+  const sr = svg.getBoundingClientRect();
+  const rects = new Map();
+  for (const [id, c] of cards) {
+    const r = c.el.getBoundingClientRect();
+    rects.set(id, { x: r.left - sr.left, y: r.top - sr.top, width: r.width, height: r.height });
+  }
+  let out = "";
+  for (const e of state.edges || []) {
+    const age = now - e.lastAt;
+    if (age > 30000) continue;
+    const A = rects.get(e.from), B = rects.get(e.to);
+    if (!A || !B) continue;
+    const live = age < LIVE_MS;
+    const ax = A.x + A.width / 2, ay = A.y + A.height / 2, bx = B.x + B.width / 2, by = B.y + B.height / 2;
+    let dx = bx - ax, dy = by - ay;
+    const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
+    const nx = -dy, ny = dx;
+    const bend = Math.min(60, len * 0.18);
+    // aim for a bent path: shift both endpoints sideways so A→B and B→A don't overlap
+    const off = 14;
+    const [sx, sy] = clip(A, ax + nx * off, ay + ny * off, dx, dy, 4);
+    const [ex, ey] = clip(B, bx + nx * off, by + ny * off, -dx, -dy, 4);
+    const cx = (sx + ex) / 2 + nx * bend, cy = (sy + ey) / 2 + ny * bend;
+    const col = colorFor(e.from);
+    const op = live ? 1 : Math.max(0.12, 0.45 * (1 - (age - LIVE_MS) / 24000));
+    const w = live ? 4 : 2;
+    // arrowhead at receiver, oriented along the curve tangent
+    let tx = ex - cx, ty = ey - cy; const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+    const hs = live ? 14 : 9;
+    const p1x = ex - tx * hs + ty * hs * 0.55, p1y = ey - ty * hs - tx * hs * 0.55;
+    const p2x = ex - tx * hs - ty * hs * 0.55, p2y = ey - ty * hs + tx * hs * 0.55;
+    const bx2 = ex - tx * hs * 0.6, by2 = ey - ty * hs * 0.6;
+    out += `<g opacity="${op}">` +
+      `<path d="M${sx},${sy} Q${cx},${cy} ${bx2},${by2}" fill="none" stroke="${col}" stroke-width="${w}" stroke-linecap="round"` +
+      (live ? ` stroke-dasharray="10 6" class="arrow-live" style="filter:drop-shadow(0 0 5px ${col})"` : "") + `/>` +
+      `<polygon points="${ex},${ey} ${p1x},${p1y} ${p2x},${p2y}" fill="${col}"/></g>`;
+  }
+  svg.innerHTML = out;
+}
+
+function connect() {
+  const es = new EventSource("/events");
+  es.onmessage = (ev) => { try { render(JSON.parse(ev.data)); } catch (e) { console.error(e); } };
+  es.onerror = () => { $("dot").classList.remove("ok"); };
+}
+window.addEventListener("resize", () => { layout(lastCount > 0 ? lastCount : 1); drawArrows(); });
+new ResizeObserver(() => { layout(Math.max(1, lastCount)); drawArrows(); }).observe(grid);
+setInterval(() => { if (state) drawArrows(); }, 500); // age out live arrows between server pushes
+connect();
+</script>
+</body>
+</html>

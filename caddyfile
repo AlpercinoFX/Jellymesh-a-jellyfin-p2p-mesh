@@ -1,0 +1,21 @@
+your-domain.com {
+	# Replace 'your-domain.com' with your actual domain or dynamic DNS (e.g. jellyfin.example.com)
+	# 1. Private WebRTC P2P Tracker (100% private, zero external public trackers)
+	handle /tracker* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# 2. Serve the P2P client script (supports both /jellyfin-p2p.js and /web/jellyfin-p2p.js)
+	@p2pscript path /jellyfin-p2p.js /web/jellyfin-p2p.js
+	handle @p2pscript {
+		header Cache-Control "no-cache"
+		rewrite * /jellyfin-p2p.js
+		root * .
+		file_server
+	}
+
+	# 3. Jellyfin Server
+	handle {
+		reverse_proxy 127.0.0.1:8096
+	}
+}
